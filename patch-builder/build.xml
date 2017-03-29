@@ -1,0 +1,183 @@
+<?xml version="1.0" encoding="gbk"?>
+<project name="svn-test" basedir="." default="getPatch">
+
+	<property file="build.properties" />
+	<property environment="env"/> 
+	
+	<path id="svnant.classpath">
+		<fileset dir="${lib.dir}">
+			<include name="**/*.jar" />
+		</fileset>
+	</path>
+	
+	<typedef 
+		resource="org/tigris/subversion/svnant/svnantlib.xml" 
+		classpathref="svnant.classpath" 
+	/>
+	<taskdef 
+		name="exportChangedFiles" 
+		classname="com.toone.svn.task.SVNExportChangedFilesAntTask" 
+		classpathref="svnant.classpath"
+	/>
+	
+	<tstamp description="记录时间">
+   		<format property="build_date" pattern="yyyyMMddHHmmss"/>
+	</tstamp>
+	
+	
+	<path id="ALLClassPath">
+		<fileset dir="${folder.temp}/WEB-INF/lib">
+			<include name="**/*.*"/>
+		</fileset>
+		<fileset dir="${tomcat_lib}">
+			<include name="**/*.*"/>
+		</fileset>
+	</path>
+	<path id="PatchClassPath">
+		<path path="${folder.temp}/WEB-INF/classes"/>
+		<fileset dir="${folder.temp}/WEB-INF/lib">
+			<include name="**/*.*"/>
+		</fileset>
+		<fileset dir="${tomcat_lib}">
+			<include name="**/*.*"/>
+		</fileset>
+	</path>
+	
+	
+   <target name="getLastRev" description="获取最新版本号">
+        <svn javahl="true" username="${svn.user}" password="${svn.passwd}">
+			<info target="${svn.url}"/>
+		</svn> 
+		
+		<echo> 当前最新版本号是:${svn.info.lastRev}</echo>
+    </target>
+
+    <target name="getVersionNum"  depends="getLastRev" description="获取版本号">
+
+    	<input message="请输入开始版本号[eg. 111]:" addproperty="beginVersion"></input>
+    	<input message="请输入结束版本号[eg. 222]:" addproperty="endVersion"></input>
+		<condition property="beginVersionCond">
+			<equals arg1="" arg2="${beginVersion}" trim="true"/>
+		</condition>
+		<condition property="endVersionCond">
+			<equals arg1="" arg2="${endVersion}" trim="true"/>
+		</condition>
+		
+		<!--
+        <antcall target="beginVersionIsNull"></antcall>  
+		<antcall target="endVersionIsNull"></antcall>
+		-->
+
+		<echo> 版本号范围为:${beginVersion}----${endVersion} </echo>
+	
+    </target>
+	
+	<target name="endVersionIsNull" if="endVersionCond" >
+       
+    </target>
+    
+    <target name="beginVersionIsNull" if="beginVersionCond" description="开始版本号自动设置为:1">
+        <property name="beginVersion" value="1"/>
+    </target>
+	
+  
+	<target name="prepareGetPatch"  depends="getVersionNum" description="获取最新源码">
+		<delete dir="${folder.temp}"/>
+		<mkdir dir="${folder.temp}"/>
+
+		<exportChangedFiles 
+			branch="${svn.url}" 
+			start="${beginVersion}" 
+			end="${endVersion}" 
+			destination="${folder.temp}/work"
+			password="${svn.passwd}" 
+			username="${svn.user}" 
+		/>
+		
+		<svn javahl="true" username="${svn.user}" password="${svn.passwd}">
+			<export srcurl="${svn.url}/WebRoot/WEB-INF/lib" destPath="${folder.temp}/WEB-INF/lib"/>
+			<export srcurl="${svn.url}/src" destPath="${folder.temp}/allsrc"/>
+		</svn>
+		
+		<!--
+		<copy todir="${folder.temp}/lib">
+           <fileset dir="${folder.temp}/workflowlib" />
+        </copy>
+		-->
+
+		<mkdir dir="${folder.temp}/WEB-INF/classes"/>
+		<javac 
+			debug="on"  
+			srcdir="${folder.temp}/allsrc" 
+			destdir="${folder.temp}/WEB-INF/classes" 
+			memoryInitialSize="256m" 
+			memoryMaximumSize="512m"  
+			executable="${javac}"
+			fork="yes" 
+			deprecation="true"
+			nowarn="on"
+			source="${source}"
+			target="${target}"
+			optimize="true"
+		>
+			<include name="**/*.java"/>
+			<classpath refid="ALLClassPath"/>
+		</javac>
+
+	</target>
+
+	<target name="getPatch" depends="prepareGetPatch" description="获取结束版本的所有代码,打包补丁">
+
+		<property name="folder.this.dest" location="${folder.dest}/${projectName}_${beginVersion}_${endVersion}_${build_date}"/>
+		
+	    <mkdir  dir="${folder.this.dest}"/>
+		<svn javahl="true" username="${svn.user}" password="${svn.passwd}"> 
+			<log 
+				destfile="${folder.this.dest}/revision.log" 
+				url="${svn.url}" 
+				asXml="false" 
+				startRevision="${beginVersion}" 
+				stopRevision="${endVersion}"
+			/> 
+		</svn> 
+		
+		<mkdir  dir="${folder.this.dest}/UpdateList"/>
+		<touch file="${folder.this.dest}/UpdateList/${projectName}_${beginVersion}_${endVersion}_${build_date}.txt"/>
+
+		<!-- <delete file="${folder.temp}/WEB-INF/lib/oa50.jar"/> -->
+
+		<delete  dir="${folder.this.dest}/WebRoot/WEB-INF/classes"/>
+		<mkdir  dir="${folder.this.dest}/WebRoot/WEB-INF/classes" description="建立class目录"/>
+		<mkdir  dir="${folder.temp}/work/lib" description="建立lib目录"/>
+		
+		<javac 
+			verbose="true"
+			debug="on"  
+			srcdir="${folder.temp}/work/src" 
+			destdir="${folder.this.dest}/WebRoot/WEB-INF/classes"  
+			memoryInitialSize="256m" 
+			memoryMaximumSize="1024m"   
+			executable="${javac}" 
+			deprecation="true" 
+			fork="yes" 
+			nowarn="on" 
+		>
+			<include name="**/*.java"/>
+			<classpath refid="PatchClassPath"/>
+		</javac>
+
+		<copy todir="${folder.this.dest}/WebRoot/WEB-INF/classes">
+			<fileset dir="${folder.temp}/work/src" excludes="**/*.java"/>
+		</copy>
+
+		<copy todir="${folder.this.dest}">
+			<fileset dir="${folder.temp}/work" excludes="src/, WebRoot/WEB-INF/classes/"/>
+		</copy>
+
+		<copy todir="${folder.this.dest}/WebRoot/WEB-INF/lib" overwrite="true">
+			<fileset dir="${folder.temp}/work/lib"/>
+		</copy>
+
+	</target>
+
+</project>
